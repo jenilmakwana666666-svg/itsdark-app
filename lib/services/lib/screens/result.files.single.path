@@ -1,0 +1,107 @@
+import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:file_picker/file_picker.dart';
+
+class ChatScreen extends StatefulWidget {
+  final String videoTitle;
+  const ChatScreen({super.key, required this.videoTitle});
+
+  @override
+  State<ChatScreen> createState() => _ChatScreenState();
+}
+
+class _ChatScreenState extends State<ChatScreen> {
+  final TextEditingController _msgController = TextEditingController();
+
+  void sendMessage({String? fileUrl}) async {
+    if (_msgController.text.trim().isEmpty && fileUrl == null) return;
+
+    await FirebaseFirestore.instance.collection('chats').add({
+      'message': _msgController.text.trim(),
+      'fileUrl': fileUrl ?? '',
+      'videoRef': widget.videoTitle,
+      'timestamp': FieldValue.serverTimestamp(),
+    });
+
+    _msgController.clear();
+  }
+
+  Future<void> pickAndUploadFile() async {
+    FilePickerResult? result = await FilePicker.platform.pickFiles();
+
+    if (result != null && result.files.single.path != null) {
+      File file = File(result.files.single.path!);
+      String fileName = result.files.single.name;
+
+      Reference ref = FirebaseStorage.instance.ref().child('chat_files/$fileName');
+      UploadTask uploadTask = ref.putFile(file);
+      TaskSnapshot snapshot = await uploadTask;
+      
+      String downloadUrl = await snapshot.ref.getDownloadURL();
+      sendMessage(fileUrl: downloadUrl);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("Private Chat")),
+      body: Column(
+        children: [
+          Expanded(
+            child: StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('chats')
+                  .where('videoRef', isEqualTo: widget.videoTitle)
+                  .orderBy('timestamp', descending: true)
+                  .snapshots(),
+              builder: (context, snapshot) {
+                if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+
+                var docs = snapshot.data!.docs;
+                return ListView.builder(
+                  reverse: true,
+                  itemCount: docs.length,
+                  itemBuilder: (context, index) {
+                    var data = docs[index];
+                    return ListTile(
+                      title: Text(data['message']),
+                      subtitle: data['fileUrl'] != ''
+                          ? Text("📁 Attachment: ${data['fileUrl']}", style: const TextStyle(color: Colors.blue))
+                          : null,
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Row(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.attach_file, color: Colors.redAccent),
+                  onPressed: pickAndUploadFile,
+                ),
+                Expanded(
+                  child: TextField(
+                    controller: _msgController,
+                    decoration: const InputDecoration(
+                      hintText: "Type doubt or ask for preset/file...",
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.send, color: Colors.redAccent),
+                  onPressed: () => sendMessage(),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
